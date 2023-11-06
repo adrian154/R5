@@ -6,10 +6,25 @@
 #define OP_JAL                      0x6f
 #define OP_JALR                     0x67
 #define OP_BRANCH                   0x63
+#define OP_LOAD                     0x3
+#define OP_STORE                    0x23
 #define OP_IMM                      0x13
 #define OP_IMM32                    0x1b
 #define OP_OP                       0x33
 #define OP_OP32                     0x3b
+
+#define LOAD_FUNCT3_LB              0x0
+#define LOAD_FUNCT3_LH              0x1
+#define LOAD_FUNCT3_LW              0x2
+#define LOAD_FUNCT3_LBU             0x4
+#define LOAD_FUNCT3_LHU             0x5
+
+#define BRANCH_FUNCT3_BEQ           0x0
+#define BRANCH_FUNCT3_BNE           0x1
+#define BRANCH_FUNCT3_BLT           0x4
+#define BRANCH_FUNCT3_BGE           0x5
+#define BRANCH_FUNCT3_BLTU          0x6
+#define BRANCH_FUNCT3_BGEU          0x7
 
 #define OP_IMM_FUNCT3_ADDI          0x0
 #define OP_IMM_FUNCT3_SLLI          0x1
@@ -36,13 +51,6 @@
 #define OP32_FUNCT3_ADDW_SUBW       0x0
 #define OP32_FUNCT3_SLLW            0x1
 #define OP32_FUNCT3_SRLW_SRAW       0x5
-
-#define BRANCH_FUNCT3_BEQ           0x0
-#define BRANCH_FUNCT3_BNE           0x1
-#define BRANCH_FUNCT3_BLT           0x4
-#define BRANCH_FUNCT3_BGE           0x5
-#define BRANCH_FUNCT3_BLTU          0x6
-#define BRANCH_FUNCT3_BGEU          0x7
 
 /* This mask is used to extract the lower bits of an address to check instruc-
    tion alignment. */
@@ -115,6 +123,12 @@ void exec(uint32_t insn, CPU *cpu) {
        whether such a condition has occurred. */
     bool pc_updated = false;
 
+    uint64_t target;
+    int64_t imm;
+    uint32_t imm32;
+    int shift, shiftType;
+    bool should_branch;
+
     switch(opcode) {
         case OP_LUI:
             cpu->regs[rd] = decode_immediate_U(insn);
@@ -123,25 +137,24 @@ void exec(uint32_t insn, CPU *cpu) {
             cpu->regs[rd] = decode_immediate_U(insn) + cpu->pc;
             break;
         case OP_JAL:
-            uint64_t target = cpu->pc + decode_immediate_J(insn);
-            if(target & INSN_ALIGN_MASK != 0) {
+            target = cpu->pc + decode_immediate_J(insn);
+            if((target & INSN_ALIGN_MASK) != 0) {
                 break; // TODO: instruction misaligned
             }
             cpu->regs[rd] = cpu->pc + 4;
             cpu->pc = target;
             pc_updated = true;
             break;
-        case OP_JALR:;
-            uint64_t target = (cpu->pc + decode_immediate_I(insn)) & ~(uint64_t)1;
-            if(target & INSN_ALIGN_MASK != 0) {
+        case OP_JALR: 
+            target = (cpu->pc + decode_immediate_I(insn)) & ~(uint64_t)1;
+            if((target & INSN_ALIGN_MASK) != 0) {
                 break; // TODO: instruction misaligned
             }
             cpu->regs[rd] = cpu->pc + 4;
             cpu->pc = target;
             pc_updated = true;
             break;
-                case OP_BRANCH:
-            int should_branch;
+        case OP_BRANCH:
             switch(funct3) {
                 case BRANCH_FUNCT3_BEQ:
                     should_branch = cpu->regs[rs1] == cpu->regs[rs2];
@@ -165,16 +178,33 @@ void exec(uint32_t insn, CPU *cpu) {
                     break; // TODO: illegal instruction
             }
             if(should_branch) {
-                uint64_t target = cpu->pc + decode_immediate_B(insn);
-                if(target & INSN_ALIGN_MASK != 0) {
+                target = cpu->pc + decode_immediate_B(insn);
+                if((target & INSN_ALIGN_MASK) != 0) {
                     break; // TODO: instruction misaligned
                 }
                 cpu->pc = target;
                 pc_updated = true;
             }
             break;
-        case OP_IMM:;
-            int64_t imm = decode_immediate_I(insn);
+        case OP_LOAD:
+            target = cpu->regs[rs1] + decode_immediate_I(insn);
+            switch(funct3) {
+                case LOAD_FUNCT3_LB:
+                    break;
+                case LOAD_FUNCT3_LH:
+                    break;
+                case LOAD_FUNCT3_LW:
+                    break;
+                case LOAD_FUNCT3_LBU:
+                    break;
+                case LOAD_FUNCT3_LHU:
+                    break;
+            }
+            break;
+        case OP_STORE:
+            break;
+        case OP_IMM:
+            imm = decode_immediate_I(insn);
             switch(funct3) {
                 case OP_IMM_FUNCT3_ADDI:
                     cpu->regs[rd] = cpu->regs[rs1] + imm;
@@ -200,9 +230,9 @@ void exec(uint32_t insn, CPU *cpu) {
                     else
                         break; // TODO: illegal instruction
                     break;
-                case OP_IMM_FUNCT3_SRLI_SRAI:;
-                    int shift = imm & 0x3f,
-                        shiftType = imm & 0xfc0;
+                case OP_IMM_FUNCT3_SRLI_SRAI:
+                    shift = imm & 0x3f;
+                    shiftType = imm & 0xfc0;
                     if(shiftType == 0) 
                         cpu->regs[rd] = cpu->regs[rs1] >> shift;
                     else if(shiftType == 0x10)
@@ -246,8 +276,8 @@ void exec(uint32_t insn, CPU *cpu) {
                     else
                         break; // TODO: illegal instruction
                     break;
-                case OP_FUNCT3_SRL_SRA:;
-                    int shift = cpu->regs[rs2] & 0x3f;
+                case OP_FUNCT3_SRL_SRA:
+                    shift = cpu->regs[rs2] & 0x3f;
                     if(funct7 == 0)
                         cpu->regs[rd] = cpu->regs[rs1] >> shift;
                     else if(funct7 == 0x20)
@@ -269,21 +299,21 @@ void exec(uint32_t insn, CPU *cpu) {
                     break;
             }
             break;
-        case OP_IMM32:;
-            int32_t imm = decode_immediate_I(insn);
+        case OP_IMM32:
+            imm32 = decode_immediate_I(insn);
             switch(funct3) {
                 case OP_IMM32_FUNCT3_ADDIW:
-                    cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] + imm);
+                    cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] + imm32);
                     break;
                 case OP_IMM32_FUNCT3_SLLIW:
-                    if((imm & 0xfe0) == 0)
-                        cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] << (imm & 0x1f)); 
+                    if((imm32 & 0xfe0) == 0)
+                        cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] << (imm32 & 0x1f)); 
                     else
                         break; // TODO: illegal instruction
                     break;
                 case OP_IMM32_FUNCT3_SRLIW_SRAIW:
-                    int shift = imm & 0x1f,
-                        shiftType = imm & 0xfe0;
+                    shift = imm32 & 0x1f;
+                    shiftType = imm32 & 0xfe0;
                     if(shiftType == 0) 
                         cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] >> shift);
                     else if(shiftType == 0x20)
@@ -312,7 +342,7 @@ void exec(uint32_t insn, CPU *cpu) {
                         break; // TODO: illegal instruction
                     break;
                 case OP32_FUNCT3_SRLW_SRAW:
-                    int shift = cpu->regs[rs2] & 0x1f;
+                    shift = cpu->regs[rs2] & 0x1f;
                     if(funct7 == 0)
                         cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] >> shift);
                     else if(funct7 == 0x20)
