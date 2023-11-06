@@ -52,14 +52,18 @@
 #define OP32_FUNCT3_SLLW            0x1
 #define OP32_FUNCT3_SRLW_SRAW       0x5
 
-/* This mask is used to extract the lower bits of an address to check instruc-
-   tion alignment. */
-#define INSN_ALIGN_MASK             0x3
+#define PL_USER                     0x0
+#define PL_SUPERVISOR               0x1
+#define PL_MACHINE                  0x3
 
 typedef struct {
     uint64_t regs[32];
     uint64_t pc;
 } CPU;
+
+static inline bool address_misaligned(uint64_t addr) {
+    return addr & 0x3;
+}
 
 /* Immediate operands in instructions may be stored in one of five formats and
    are always sign-extended, which we accomplish using struct bitfields. */
@@ -102,7 +106,7 @@ static inline int64_t arithmetic_shift_right_64(int64_t value, int shift) {
     return value < 0 ? ~(~value >> shift) : value >> shift;
 }
 
-static inline uint32_t arithmetic_shift_right_32(int32_t value, int shift) {
+static inline int32_t arithmetic_shift_right_32(int32_t value, int shift) {
     return value < 0 ? ~(~value >> shift) : value >> shift;
 }
 
@@ -138,7 +142,7 @@ void exec(uint32_t insn, CPU *cpu) {
             break;
         case OP_JAL:
             target = cpu->pc + decode_immediate_J(insn);
-            if((target & INSN_ALIGN_MASK) != 0) {
+            if(address_misaligned(target)) {
                 break; // TODO: instruction misaligned
             }
             cpu->regs[rd] = cpu->pc + 4;
@@ -147,7 +151,7 @@ void exec(uint32_t insn, CPU *cpu) {
             break;
         case OP_JALR: 
             target = (cpu->pc + decode_immediate_I(insn)) & ~(uint64_t)1;
-            if((target & INSN_ALIGN_MASK) != 0) {
+            if(address_misaligned(target)) {
                 break; // TODO: instruction misaligned
             }
             cpu->regs[rd] = cpu->pc + 4;
@@ -179,7 +183,7 @@ void exec(uint32_t insn, CPU *cpu) {
             }
             if(should_branch) {
                 target = cpu->pc + decode_immediate_B(insn);
-                if((target & INSN_ALIGN_MASK) != 0) {
+                if(address_misaligned(target)) {
                     break; // TODO: instruction misaligned
                 }
                 cpu->pc = target;
@@ -199,6 +203,8 @@ void exec(uint32_t insn, CPU *cpu) {
                     break;
                 case LOAD_FUNCT3_LHU:
                     break;
+                default:
+                    break; // TODO: illegal instruction
             }
             break;
         case OP_STORE:
@@ -350,6 +356,8 @@ void exec(uint32_t insn, CPU *cpu) {
                     else 
                         break; // TODO: illegal instruction
                     break;
+                default:
+                    break; // TODO: illegal instruction
             }
             break;
     }
