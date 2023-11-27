@@ -1,5 +1,6 @@
 #include <stdbool.h>
-#include <stdint.h>
+#include "core.h"
+#include "bus.h"
 
 #define OP_LUI                      0x37
 #define OP_AUIPC                    0x17
@@ -18,6 +19,13 @@
 #define LOAD_FUNCT3_LW              0x2
 #define LOAD_FUNCT3_LBU             0x4
 #define LOAD_FUNCT3_LHU             0x5
+#define LOAD_FUNCT3_LWU             0x6
+#define LOAD_FUNCT3_LD              0x3
+
+#define STORE_FUNCT3_SB             0x0
+#define STORE_FUNCT3_SH             0x1
+#define STORE_FUNCT3_SW             0x2
+#define STORE_FUNCT3_SD             0x3
 
 #define BRANCH_FUNCT3_BEQ           0x0
 #define BRANCH_FUNCT3_BNE           0x1
@@ -51,15 +59,6 @@
 #define OP32_FUNCT3_ADDW_SUBW       0x0
 #define OP32_FUNCT3_SLLW            0x1
 #define OP32_FUNCT3_SRLW_SRAW       0x5
-
-#define PL_USER                     0x0
-#define PL_SUPERVISOR               0x1
-#define PL_MACHINE                  0x3
-
-typedef struct {
-    uint64_t regs[32];
-    uint64_t pc;
-} CPU;
 
 static inline bool address_misaligned(uint64_t addr) {
     return addr & 0x3;
@@ -97,20 +96,7 @@ static inline int64_t decode_immediate_J(uint32_t insn) {
     return s.x;
 }
 
-/* Right-shifts on negative values are undefined behavior in C, so we need to
-   manually implement arithmetic right shifts. (This function relies on imple-
-   mentation defined behavior, which is in theory better than relying on un-
-   defined behavior.) GCC will optimize both of these functions to a single
-   instruction on x86. */
-static inline int64_t arithmetic_shift_right_64(int64_t value, int shift) {
-    return value < 0 ? ~(~value >> shift) : value >> shift;
-}
-
-static inline int32_t arithmetic_shift_right_32(int32_t value, int shift) {
-    return value < 0 ? ~(~value >> shift) : value >> shift;
-}
-
-void exec(uint32_t insn, CPU *cpu) {
+void exec32(uint32_t insn, CPU *cpu) {
 
     /* Lowest 6 bits are always the opcode, the other fields are speculatively
        decoded here */
@@ -121,10 +107,9 @@ void exec(uint32_t insn, CPU *cpu) {
         rs2 = (insn >> 20) & 0x1f,
         funct7 = insn >> 25;
 
-    /* After most instructions, we increase PC by 4 to move to the next instruc-
-       tion. However, there are situations where this *shouldn't* be done (i.e.
-       instructions that result in a branch), so we need to keep track of
-       whether such a condition has occurred. */
+    /* By default we increase PC by 4 to move to the next instruction, but we
+       shouldn't do this after a branch, so keep track of whether PC was 
+       updated by the instruction. */
     bool pc_updated = false;
 
     uint64_t target;
@@ -194,20 +179,48 @@ void exec(uint32_t insn, CPU *cpu) {
             target = cpu->regs[rs1] + decode_immediate_I(insn);
             switch(funct3) {
                 case LOAD_FUNCT3_LB:
+                    cpu->regs[rd] = (int8_t)load8(target);
                     break;
                 case LOAD_FUNCT3_LH:
+                    cpu->regs[rd] = (int16_t)load16(target);
                     break;
                 case LOAD_FUNCT3_LW:
+                    cpu->regs[rd] = (int32_t)load32(target);
                     break;
                 case LOAD_FUNCT3_LBU:
+                    cpu->regs[rd] = load8(target);
                     break;
                 case LOAD_FUNCT3_LHU:
+                    cpu->regs[rd] = load16(target);
+                    break;
+                case LOAD_FUNCT3_LWU:
+                    cpu->regs[rd] = load32(target);
+                    break;
+                case LOAD_FUNCT3_LD:
+                    cpu->regs[rd] = load64(target);
                     break;
                 default:
                     break; // TODO: illegal instruction
             }
             break;
         case OP_STORE:
+            target = cpu->regs[rs1] + decode_immediate_S(insn);
+            switch(funct3) {
+                case STORE_FUNCT3_SB:
+                    store8(target, cpu->regs[rs2]);
+                    break;
+                case STORE_FUNCT3_SH:
+                    store16(target, cpu->regs[rs2]);
+                    break;
+                case STORE_FUNCT3_SW:
+                    store32(target, cpu->regs[rs2]);
+                    break;
+                case STORE_FUNCT3_SD:
+                    store64(target, cpu->regs[rs2]);
+                    break;
+                default:
+                    break; // TODO: illegal instruction
+            }
             break;
         case OP_IMM:
             imm = decode_immediate_I(insn);
@@ -242,7 +255,7 @@ void exec(uint32_t insn, CPU *cpu) {
                     if(shiftType == 0) 
                         cpu->regs[rd] = cpu->regs[rs1] >> shift;
                     else if(shiftType == 0x10)
-                        cpu->regs[rd] = arithmetic_shift_right_64(cpu->regs[rs1], shift);
+                        cpu->regs[rd] = (int64_t)cpu->regs[rs1] >> shift;
                     else
                         break; // TODO: illegal instruction
                     break;
@@ -287,7 +300,7 @@ void exec(uint32_t insn, CPU *cpu) {
                     if(funct7 == 0)
                         cpu->regs[rd] = cpu->regs[rs1] >> shift;
                     else if(funct7 == 0x20)
-                        cpu->regs[rd] = arithmetic_shift_right_64(cpu->regs[rs1], shift);
+                        cpu->regs[rd] = cpu->regs[rs1] >> shift;
                     else 
                         break; // TODO: illegal instruction
                     break;
@@ -309,11 +322,11 @@ void exec(uint32_t insn, CPU *cpu) {
             imm32 = decode_immediate_I(insn);
             switch(funct3) {
                 case OP_IMM32_FUNCT3_ADDIW:
-                    cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] + imm32);
+                    cpu->regs[rd] = (int32_t)((uint32_t)cpu->regs[rs1] + imm32);
                     break;
                 case OP_IMM32_FUNCT3_SLLIW:
                     if((imm32 & 0xfe0) == 0)
-                        cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] << (imm32 & 0x1f)); 
+                        cpu->regs[rd] = (int32_t)((uint32_t)cpu->regs[rs1] << (imm32 & 0x1f)); 
                     else
                         break; // TODO: illegal instruction
                     break;
@@ -321,9 +334,9 @@ void exec(uint32_t insn, CPU *cpu) {
                     shift = imm32 & 0x1f;
                     shiftType = imm32 & 0xfe0;
                     if(shiftType == 0) 
-                        cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] >> shift);
+                        cpu->regs[rd] = (int32_t)((uint32_t)cpu->regs[rs1] >> shift);
                     else if(shiftType == 0x20)
-                        cpu->regs[rd] = arithmetic_shift_right_32(cpu->regs[rs1], shift);
+                        cpu->regs[rd] = (int32_t)cpu->regs[rs1] >> shift;
                     else
                         break; // TODO: illegal instruction
                     break;
@@ -335,24 +348,24 @@ void exec(uint32_t insn, CPU *cpu) {
             switch(funct3) {
                 case OP32_FUNCT3_ADDW_SUBW:
                     if(funct7 == 0)
-                        cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] + (uint32_t)cpu->regs[rs2]);
+                        cpu->regs[rd] = (int32_t)((uint32_t)cpu->regs[rs1] + (uint32_t)cpu->regs[rs2]);
                     else if(funct7 == 0x20)
-                        cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] - (uint32_t)cpu->regs[rs2]);
+                        cpu->regs[rd] = (int32_t)((uint32_t)cpu->regs[rs1] - (uint32_t)cpu->regs[rs2]);
                     else
                         break; // TODO: illegal instruction
                     break;
                 case OP32_FUNCT3_SLLW:
                     if(funct7 == 0)
-                        cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] << (cpu->regs[rs2] & 0x1f));
+                        cpu->regs[rd] = (int32_t)((uint32_t)cpu->regs[rs1] << (cpu->regs[rs2] & 0x1f));
                     else
                         break; // TODO: illegal instruction
                     break;
                 case OP32_FUNCT3_SRLW_SRAW:
                     shift = cpu->regs[rs2] & 0x1f;
                     if(funct7 == 0)
-                        cpu->regs[rd] = (int64_t)((uint32_t)cpu->regs[rs1] >> shift);
+                        cpu->regs[rd] = (int32_t)((uint32_t)cpu->regs[rs1] >> shift);
                     else if(funct7 == 0x20)
-                        cpu->regs[rd] = arithmetic_shift_right_32(cpu->regs[rs1], shift);
+                        cpu->regs[rd] = (int32_t)cpu->regs[rs1] >> shift;
                     else 
                         break; // TODO: illegal instruction
                     break;
@@ -362,10 +375,12 @@ void exec(uint32_t insn, CPU *cpu) {
             break;
     }
 
-    cpu->regs[0] = 0;
     if(!pc_updated) {
         cpu->pc += 4;
     }
+
+    /* x0 must always be zero */
+    cpu->regs[0] = 0;
 
 }
 

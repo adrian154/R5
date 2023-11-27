@@ -8,3 +8,7 @@
     * PLIC
     * UART
     * VirtIO
+
+Testing:
+* setup riscof
+* run a fuzzer

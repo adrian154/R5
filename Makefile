@@ -12,7 +12,7 @@ bin/r5: $(OBJS)
 	gcc $? -o $@ -fsanitize=address -fsanitize=undefined
 
 bin/%.o: src/%.c | bin
-	gcc -Wall -Wextra -Wpedantic -std=c17 -fsanitize=address -fsanitize=undefined -c $< -o $@
+	gcc -Wall -Wextra -Wpedantic -std=c17 -fsanitize=address -fsanitize=undefined -g -c $< -o $@
 
 bin:
 	mkdir -p bin
