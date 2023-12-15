@@ -1,6 +1,9 @@
 #include <stdbool.h>
-#include "core.h"
+#include "cpu.h"
 #include "bus.h"
+
+// Extension defines
+#define EXT_M
 
 #define OP_LUI                      0x37
 #define OP_AUIPC                    0x17
@@ -13,6 +16,8 @@
 #define OP_IMM32                    0x1b
 #define OP_OP                       0x33
 #define OP_OP32                     0x3b
+#define OP_MISC_MEM                 0xf
+#define OP_SYSTEM                   0x73
 
 #define LOAD_FUNCT3_LB              0x0
 #define LOAD_FUNCT3_LH              0x1
@@ -59,6 +64,14 @@
 #define OP32_FUNCT3_ADDW_SUBW       0x0
 #define OP32_FUNCT3_SLLW            0x1
 #define OP32_FUNCT3_SRLW_SRAW       0x5
+
+#define MISC_MEM_FUNCT3_FENCE       0x0
+
+#define SYSTEM_FUNCT3_ECALL_EBREAK  0x0
+
+// Fence modes
+#define FENCE_MODE_NORMAL           0x0
+#define FENCE_MODE_TSO              0x8
 
 static inline bool address_misaligned(uint64_t addr) {
     return addr & 0x3;
@@ -112,10 +125,12 @@ void exec32(uint32_t insn, CPU *cpu) {
        updated by the instruction. */
     bool pc_updated = false;
 
+    /* Variables used by instruction execution */
     uint64_t target;
     int64_t imm;
     uint32_t imm32;
-    int shift, shiftType;
+    int shift, shift_type;
+    int fenceMode;
     bool should_branch;
 
     switch(opcode) {
@@ -251,10 +266,10 @@ void exec32(uint32_t insn, CPU *cpu) {
                     break;
                 case OP_IMM_FUNCT3_SRLI_SRAI:
                     shift = imm & 0x3f;
-                    shiftType = imm & 0xfc0;
-                    if(shiftType == 0) 
+                    shift_type = imm & 0xfc0;
+                    if(shift_type == 0) 
                         cpu->regs[rd] = cpu->regs[rs1] >> shift;
-                    else if(shiftType == 0x10)
+                    else if(shift_type == 0x10)
                         cpu->regs[rd] = (int64_t)cpu->regs[rs1] >> shift;
                     else
                         break; // TODO: illegal instruction
@@ -332,10 +347,10 @@ void exec32(uint32_t insn, CPU *cpu) {
                     break;
                 case OP_IMM32_FUNCT3_SRLIW_SRAIW:
                     shift = imm32 & 0x1f;
-                    shiftType = imm32 & 0xfe0;
-                    if(shiftType == 0) 
+                    shift_type = imm32 & 0xfe0;
+                    if(shift_type == 0) 
                         cpu->regs[rd] = (int32_t)((uint32_t)cpu->regs[rs1] >> shift);
-                    else if(shiftType == 0x20)
+                    else if(shift_type == 0x20)
                         cpu->regs[rd] = (int32_t)cpu->regs[rs1] >> shift;
                     else
                         break; // TODO: illegal instruction
@@ -373,6 +388,27 @@ void exec32(uint32_t insn, CPU *cpu) {
                     break; // TODO: illegal instruction
             }
             break;
+        case OP_MISC_MEM:
+            switch(funct3) {
+                case MISC_MEM_FUNCT3_FENCE:
+                    /* Since our EEI only supports a single hart and all memory
+                       operations are immediately executed, FENCE is a no-op. */
+                    break;
+                default:
+                    break; // TODO: illegal instruction
+            }
+            break;
+        case OP_SYSTEM:
+            switch(funct3) {
+                case SYSTEM_FUNCT3_ECALL_EBREAK:
+                    
+                    break;
+                default:
+                    break; // TODO: illegal instruction
+            }
+            break;
+        default: 
+            break; // TODO: illegal instruction
     }
 
     if(!pc_updated) {
